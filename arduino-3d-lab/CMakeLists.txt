@@ -102,6 +102,35 @@ if(BUILD_TESTING)
     add_test(NAME circuit COMMAND test_circuit)
 endif()
 
+add_library(arduino3d_emulator
+    src/emulator/Memory.cpp
+    src/emulator/CPU.cpp
+)
+
+target_include_directories(arduino3d_emulator
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_compile_features(arduino3d_emulator PUBLIC cxx_std_20)
+
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(arduino3d_emulator PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+    )
+endif()
+
+if(BUILD_TESTING)
+    add_executable(test_memory tests/test_memory.cpp)
+    target_link_libraries(test_memory PRIVATE arduino3d_emulator)
+    add_test(NAME memory COMMAND test_memory)
+
+    add_executable(test_cpu tests/test_cpu.cpp)
+    target_link_libraries(test_cpu PRIVATE arduino3d_emulator)
+    add_test(NAME cpu_registers COMMAND test_cpu)
+endif()
 
 add_executable(arduino-3d-lab src/main.cpp)
 target_link_libraries(arduino-3d-lab PRIVATE arduino3d_core)
