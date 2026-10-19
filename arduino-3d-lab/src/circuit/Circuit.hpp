@@ -14,7 +14,7 @@ namespace arduino3d {
 class Circuit {
 public:
     PinId addPin(std::string name, PinDirection direction);
-
+    void setPinDirection(PinId pin, PinDirection direction);
     WireId connect(PinId first, PinId second);
     void addLed(PinId anode, PinId cathode);
 
