@@ -132,6 +132,32 @@ if(BUILD_TESTING)
     add_test(NAME cpu_registers COMMAND test_cpu)
 endif()
 
+add_library(arduino3d_emulator
+    src/emulator/Memory.cpp
+    src/emulator/CPU.cpp
+    src/emulator/InstructionDecoder.cpp
+    src/emulator/AVR.cpp
+)
+
+target_include_directories(arduino3d_emulator
+    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_compile_features(arduino3d_emulator PUBLIC cxx_std_20)
+
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(arduino3d_emulator PRIVATE
+        -Wall -Wextra -Wpedantic
+    )
+endif()
+
+if(BUILD_TESTING)
+    add_executable(test_avr tests/test_avr.cpp)
+    target_link_libraries(test_avr PRIVATE arduino3d_emulator)
+    add_test(NAME avr_instructions COMMAND test_avr)
+endif()
+
+
 add_executable(arduino-3d-lab src/main.cpp)
 target_link_libraries(arduino-3d-lab PRIVATE arduino3d_core)
 
