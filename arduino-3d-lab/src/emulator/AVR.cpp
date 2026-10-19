@@ -1,7 +1,7 @@
 #include "emulator/AVR.hpp"
 
 #include <cstdint>
-#include <stdexcept>
+#include <exception>
 #include <string>
 
 namespace arduino3d::emulator {
@@ -14,13 +14,13 @@ void setArithmeticFlags(
     std::uint8_t result,
     bool subtraction
 ) {
-    const bool d3 = (rd & 0x08) != 0;
-    const bool r3 = (rr & 0x08) != 0;
-    const bool q3 = (result & 0x08) != 0;
+    const bool d3 = (rd & 0x08U) != 0;
+    const bool r3 = (rr & 0x08U) != 0;
+    const bool q3 = (result & 0x08U) != 0;
 
-    const bool d7 = (rd & 0x80) != 0;
-    const bool r7 = (rr & 0x80) != 0;
-    const bool q7 = (result & 0x80) != 0;
+    const bool d7 = (rd & 0x80U) != 0;
+    const bool r7 = (rr & 0x80U) != 0;
+    const bool q7 = (result & 0x80U) != 0;
 
     bool halfCarry;
     bool carry;
@@ -56,6 +56,8 @@ RunStatus toRunStatus(StepStatus status) {
         return RunStatus::ProgramCounterOutOfRange;
     case StepStatus::InvalidCpuState:
         return RunStatus::InvalidCpuState;
+    case StepStatus::PeripheralError:
+        return RunStatus::PeripheralError;
     case StepStatus::Executed:
         break;
     }
@@ -65,7 +67,8 @@ RunStatus toRunStatus(StepStatus status) {
 
 } // namespace
 
-AVR::AVR(CPUState& cpu) noexcept : cpu_(cpu) {
+AVR::AVR(CPUState& cpu, GPIO* gpio) noexcept
+    : cpu_(cpu), gpio_(gpio) {
 }
 
 CPUState& AVR::cpu() noexcept {
@@ -87,6 +90,7 @@ StepResult AVR::step() {
     }
 
     std::string validationError;
+
     if (!cpu_.validate(&validationError)) {
         result.status = StepStatus::InvalidCpuState;
         result.message = validationError;
@@ -103,29 +107,42 @@ StepResult AVR::step() {
     }
 
     const auto low = cpu_.memory.readProgramByte(
-        static_cast<std::uint16_t>(byteAddress));
+        static_cast<std::uint16_t>(byteAddress)
+    );
     const auto high = cpu_.memory.readProgramByte(
-        static_cast<std::uint16_t>(byteAddress + 1U));
+        static_cast<std::uint16_t>(byteAddress + 1U)
+    );
 
     result.word = static_cast<std::uint16_t>(
-        low | (static_cast<std::uint16_t>(high) << 8U));
+        low | (static_cast<std::uint16_t>(high) << 8U)
+    );
 
-    DecodedInstruction instruction;
+    DecodedInstruction instruction{};
 
     try {
         instruction = InstructionDecoder::decode(result.word);
-    } catch (const InvalidInstruction& error) {
+    } catch (const InvalidInstruction& exception) {
         result.status = StepStatus::InvalidInstruction;
-        result.message = error.what();
+        result.message = exception.what();
         return result;
     }
 
     try {
         execute(instruction);
-    } catch (const std::exception& error) {
+    } catch (const std::exception& exception) {
         result.status = StepStatus::InvalidCpuState;
-        result.message = error.what();
+        result.message = exception.what();
         return result;
+    }
+
+    if (gpio_ != nullptr) {
+        std::string gpioError;
+
+        if (!gpio_->synchronize(&gpioError)) {
+            result.status = StepStatus::PeripheralError;
+            result.message = gpioError;
+            return result;
+        }
     }
 
     result.status = StepStatus::Executed;
@@ -142,29 +159,32 @@ void AVR::execute(const DecodedInstruction& instruction) {
 
     case Opcode::LDI:
         cpu_.registers.write(
-            cpu_.memory, instruction.rd, instruction.immediate);
+            cpu_.memory, instruction.rd, instruction.immediate
+        );
         cpu_.pc = nextPc;
         return;
 
     case Opcode::MOV: {
         const auto value = cpu_.registers.read(
-            cpu_.memory, instruction.rr);
-
+            cpu_.memory, instruction.rr
+        );
         cpu_.registers.write(
-            cpu_.memory, instruction.rd, value);
-
+            cpu_.memory, instruction.rd, value
+        );
         cpu_.pc = nextPc;
         return;
     }
 
     case Opcode::ADD: {
         const auto rd = cpu_.registers.read(
-            cpu_.memory, instruction.rd);
+            cpu_.memory, instruction.rd
+        );
         const auto rr = cpu_.registers.read(
-            cpu_.memory, instruction.rr);
+            cpu_.memory, instruction.rr
+        );
 
         const auto sum = static_cast<std::uint16_t>(rd) + rr;
-        const auto value = static_cast<std::uint8_t>(sum & 0xFF);
+        const auto value = static_cast<std::uint8_t>(sum & 0xFFU);
 
         setArithmeticFlags(cpu_.sreg, rd, rr, value, false);
         cpu_.registers.write(cpu_.memory, instruction.rd, value);
@@ -174,13 +194,16 @@ void AVR::execute(const DecodedInstruction& instruction) {
 
     case Opcode::SUB: {
         const auto rd = cpu_.registers.read(
-            cpu_.memory, instruction.rd);
+            cpu_.memory, instruction.rd
+        );
         const auto rr = cpu_.registers.read(
-            cpu_.memory, instruction.rr);
+            cpu_.memory, instruction.rr
+        );
 
         const auto value = static_cast<std::uint8_t>(
             static_cast<unsigned int>(rd) -
-            static_cast<unsigned int>(rr));
+            static_cast<unsigned int>(rr)
+        );
 
         setArithmeticFlags(cpu_.sreg, rd, rr, value, true);
         cpu_.registers.write(cpu_.memory, instruction.rd, value);
@@ -190,36 +213,70 @@ void AVR::execute(const DecodedInstruction& instruction) {
 
     case Opcode::CPI: {
         const auto rd = cpu_.registers.read(
-            cpu_.memory, instruction.rd);
-        const auto rr = instruction.immediate;
-
+            cpu_.memory, instruction.rd
+        );
         const auto value = static_cast<std::uint8_t>(
             static_cast<unsigned int>(rd) -
-            static_cast<unsigned int>(rr));
+            static_cast<unsigned int>(instruction.immediate)
+        );
 
-        setArithmeticFlags(cpu_.sreg, rd, rr, value, true);
+        setArithmeticFlags(
+            cpu_.sreg, rd, instruction.immediate, value, true
+        );
         cpu_.pc = nextPc;
         return;
     }
 
     case Opcode::RJMP:
         cpu_.pc = static_cast<std::uint16_t>(
-            static_cast<int>(nextPc) + instruction.relative);
+            static_cast<int>(nextPc) + instruction.relative
+        );
         return;
 
     case Opcode::BREQ:
         cpu_.pc = cpu_.sreg.flag(StatusRegister::Zero)
             ? static_cast<std::uint16_t>(
-                  static_cast<int>(nextPc) + instruction.relative)
+                  static_cast<int>(nextPc) + instruction.relative
+              )
             : nextPc;
         return;
 
     case Opcode::BRNE:
         cpu_.pc = !cpu_.sreg.flag(StatusRegister::Zero)
             ? static_cast<std::uint16_t>(
-                  static_cast<int>(nextPc) + instruction.relative)
+                  static_cast<int>(nextPc) + instruction.relative
+              )
             : nextPc;
         return;
+
+    case Opcode::IN: {
+        const auto dataAddress = static_cast<std::uint16_t>(
+            0x20U + instruction.ioAddress
+        );
+        const auto value = cpu_.memory.readData(dataAddress);
+
+        cpu_.registers.write(cpu_.memory, instruction.rd, value);
+        cpu_.pc = nextPc;
+        return;
+    }
+
+    case Opcode::OUT: {
+        const auto value = cpu_.registers.read(
+            cpu_.memory, instruction.rr
+        );
+
+        if (gpio_ != nullptr) {
+            gpio_->writeIo(instruction.ioAddress, value);
+        } else {
+            const auto dataAddress = static_cast<std::uint16_t>(
+                0x20U + instruction.ioAddress
+            );
+            cpu_.memory.writeData(dataAddress, value);
+        }
+
+        cpu_.pc = nextPc;
+        return;
+    }
     }
 }
 
