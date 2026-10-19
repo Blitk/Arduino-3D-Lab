@@ -1,5 +1,5 @@
 #include "emulator/InstructionDecoder.hpp"
-
+#include <cstddef>
 #include <string>
 
 namespace arduino3d::emulator {
