@@ -125,7 +125,7 @@ void testBreqAndBrne() {
         AVR avr(cpu);
 
         // CPI R16, 0; BREQ +1; LDI R16, 1
-        loadWords(cpu, {0x3000, 0xF009, 0xE001});
+        loadWords(cpu, {0x3000, 0xF008, 0xE001});
 
         assert(avr.step().ok());
         assert(cpu.sreg.flag(StatusRegister::Zero));
