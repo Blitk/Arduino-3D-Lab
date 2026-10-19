@@ -1,5 +1,5 @@
-
 #include "app/Application.hpp"
+#include "app/EditorUI.hpp"
 
 #include "graphics/Camera.hpp"
 #include "graphics/Renderer.hpp"
@@ -19,11 +19,11 @@
 #include <algorithm>
 #include <cstdint>
 #include <exception>
-#include <iomanip>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 namespace arduino3d {
 namespace {
@@ -33,10 +33,16 @@ constexpr int WindowHeight = 720;
 
 constexpr double CpuFrequencyHz = 16'000'000.0;
 constexpr double MaxFrameDelta = 0.05;
-constexpr std::uint64_t MaxCyclesPerFrame = 300'000;
+constexpr double MaxPendingCycles =
+    16'000'000.0 * 0.25;
+
+// Limita o trabalho por frame para preservar a responsividade
+// da interface, mesmo com firmware problemático.
+constexpr std::uint64_t MaxInstructionsPerFrame = 50'000;
 
 constexpr const char* WindowTitle = "Arduino 3D Lab";
-constexpr const char* FirmwarePath = "build/firmware/blink.hex";
+constexpr const char* InitialFirmwarePath =
+    "build/firmware/blink.hex";
 
 struct WindowDeleter {
     void operator()(GLFWwindow* window) const noexcept {
@@ -173,11 +179,7 @@ public:
           gpio(cpu, circuit, pinMap),
           avr(cpu, &gpio) {
 
-        circuit.setOutput(
-            gnd,
-            DigitalState::Low
-        );
-
+        circuit.setOutput(gnd, DigitalState::Low);
         circuit.addLed(d13, gnd);
 
         std::string error;
@@ -208,6 +210,10 @@ public:
 
     emulator::AVR& processor() noexcept {
         return avr;
+    }
+
+    std::uint32_t programCounter() const noexcept {
+        return static_cast<std::uint32_t>(cpu.pc);
     }
 
     bool ledOn() const {
@@ -287,7 +293,9 @@ bool executeFirmwareFrame(
     double deltaTime,
     double& pendingCycles,
     double& simulatedSeconds,
-    bool& firmwareRunning
+    std::uint64_t& executedCycles,
+    bool& firmwareRunning,
+    std::string& runtimeError
 ) {
     if (!firmwareRunning) {
         return false;
@@ -301,37 +309,60 @@ bool executeFirmwareFrame(
 
     pendingCycles = std::min(
         pendingCycles + elapsed * CpuFrequencyHz,
-        static_cast<double>(MaxCyclesPerFrame)
+        MaxPendingCycles
     );
 
     const auto cycleBudget =
         static_cast<std::uint64_t>(pendingCycles);
 
     std::uint64_t consumedCycles = 0;
+    std::uint64_t instructionCount = 0;
 
-    while (consumedCycles < cycleBudget) {
+    while (
+        consumedCycles < cycleBudget &&
+        instructionCount < MaxInstructionsPerFrame
+    ) {
         const emulator::StepResult result = avr.step();
+        ++instructionCount;
 
         if (!result.ok()) {
-            std::cerr
-                << "Erro durante a execução do firmware.\n"
-                << "PC: 0x"
-                << std::hex << result.pcBefore
-                << "\nInstrução: 0x"
-                << result.word
-                << std::dec
-                << "\nDetalhes: "
-                << result.message
-                << '\n';
+            runtimeError =
+                "Falha na execução do firmware. PC: 0x";
+
+            char pcBuffer[16]{};
+            std::snprintf(
+                pcBuffer,
+                sizeof(pcBuffer),
+                "%04X",
+                static_cast<unsigned int>(result.pcBefore)
+            );
+
+            runtimeError += pcBuffer;
+            runtimeError += "\nInstrução: ";
+
+            char wordBuffer[16]{};
+            std::snprintf(
+                wordBuffer,
+                sizeof(wordBuffer),
+                "0x%04X",
+                static_cast<unsigned int>(result.word)
+            );
+
+            runtimeError += wordBuffer;
+            runtimeError += "\n";
+            runtimeError += result.message;
+
+            std::cerr << runtimeError << '\n';
 
             firmwareRunning = false;
             return false;
         }
 
         if (result.cycles == 0) {
-            std::cerr
-                << "Erro: instrução executada sem "
-                   "contabilização de ciclos.\n";
+            runtimeError =
+                "A instrução executada não contabilizou ciclos.";
+
+            std::cerr << runtimeError << '\n';
 
             firmwareRunning = false;
             return false;
@@ -340,14 +371,18 @@ bool executeFirmwareFrame(
         consumedCycles += result.cycles;
     }
 
+    // Mantém o saldo de ciclos, inclusive quando o limite
+    // de instruções impede consumir todo o orçamento do frame.
     pendingCycles -= static_cast<double>(consumedCycles);
+
+    executedCycles += consumedCycles;
     simulatedSeconds +=
         static_cast<double>(consumedCycles) / CpuFrequencyHz;
 
     return true;
 }
 
-void renderFrame(
+void renderScene(
     GLFWwindow* window,
     Renderer& renderer,
     Scene& scene,
@@ -366,7 +401,6 @@ void renderFrame(
     }
 
     renderer.render(scene, camera, width, height);
-    glfwSwapBuffers(window);
 }
 
 } // namespace
@@ -378,35 +412,79 @@ int Application::run() const {
 
         Camera camera;
         Scene scene;
-
         configureWindowCallbacks(window.get(), camera);
 
-        EmulatorRuntime runtime(FirmwarePath);
+        // O ImGui é inicializado após a criação do contexto OpenGL.
+        EditorUI editorUI;
+        std::string uiError;
+
+        if (!editorUI.initialize(window.get(), &uiError)) {
+            throw std::runtime_error(
+                "Falha ao inicializar EditorUI: " + uiError
+            );
+        }
+
         Renderer renderer;
 
-        printStartupInformation();
+        std::string firmwarePath = InitialFirmwarePath;
+        std::string compileError;
+        std::string runtimeError;
+
+        std::unique_ptr<EmulatorRuntime> runtime;
+
+        const auto loadFirmware =
+            [&](const std::string& path) -> bool {
+                try {
+                    // Cria primeiro a nova instância. Se falhar,
+                    // a instância anterior não é destruída.
+                    auto replacement =
+                        std::make_unique<EmulatorRuntime>(path);
+
+                    runtime = std::move(replacement);
+                    firmwarePath = path;
+
+                    runtimeError.clear();
+                    return true;
+                } catch (const std::exception& exception) {
+                    runtimeError = exception.what();
+                    std::cerr << runtimeError << '\n';
+                    return false;
+                }
+            };
+
+        // A ausência ou falha do firmware inicial é apresentada
+        // na interface em vez de fechar imediatamente a janela.
+        const bool initiallyLoaded = loadFirmware(firmwarePath);
+
+        bool paused = !initiallyLoaded;
+        bool firmwareRunning = initiallyLoaded;
 
         double previousTime = glfwGetTime();
         double pendingCycles = 0.0;
         double simulatedSeconds = 0.0;
+        std::uint64_t executedCycles = 0;
 
-        bool paused = false;
-        bool firmwareRunning = true;
         int previousSpaceState = GLFW_RELEASE;
 
+        printStartupInformation();
+
         while (
-            glfwWindowShouldClose(window.get())
-            == GLFW_FALSE
+            glfwWindowShouldClose(window.get()) == GLFW_FALSE
         ) {
             const double currentTime = glfwGetTime();
-            const double deltaTime = currentTime - previousTime;
+            const double deltaTime = std::max(
+                0.0,
+                currentTime - previousTime
+            );
 
             previousTime = currentTime;
 
             processInput(
                 window.get(),
                 camera,
-                static_cast<float>(deltaTime)
+                static_cast<float>(
+                    std::min(deltaTime, MaxFrameDelta)
+                )
             );
 
             updatePauseState(
@@ -415,29 +493,101 @@ int Application::run() const {
                 previousSpaceState
             );
 
-            if (!paused && firmwareRunning) {
+            if (!paused && firmwareRunning && runtime) {
                 executeFirmwareFrame(
-                    runtime.processor(),
+                    runtime->processor(),
                     deltaTime,
                     pendingCycles,
                     simulatedSeconds,
-                    firmwareRunning
+                    executedCycles,
+                    firmwareRunning,
+                    runtimeError
                 );
             }
 
-            renderFrame(
+            // Cena 3D primeiro.
+            renderScene(
                 window.get(),
                 renderer,
                 scene,
                 camera,
-                runtime.ledOn()
+                runtime ? runtime->ledOn() : false
             );
 
+            // Interface por cima da cena 3D.
+            editorUI.beginFrame();
+
+            EditorUIState uiState;
+            uiState.status =
+                !runtime || !runtimeError.empty()
+                    ? SimulationStatus::Error
+                    : !firmwareRunning
+                        ? SimulationStatus::Error
+                        : paused
+                            ? SimulationStatus::Paused
+                            : SimulationStatus::Running;
+
+            uiState.firmwarePath = firmwarePath;
+            uiState.microcontroller = "ATmega328P";
+            uiState.cpuFrequencyHz = CpuFrequencyHz;
+            uiState.programCounter =
+                runtime ? runtime->programCounter() : 0;
+            uiState.executedCycles = executedCycles;
+            uiState.simulatedSeconds = simulatedSeconds;
+            uiState.compileError = compileError;
+            uiState.runtimeError = runtimeError;
+
+            editorUI.render(uiState);
+            const EditorUIActions actions =
+                editorUI.consumeActions();
+
+            // A interface apenas emite comandos. A aplicação
+            // decide como executá-los.
+            if (actions.firmwareChanged) {
+                if (loadFirmware(actions.selectedFirmware)) {
+                    pendingCycles = 0.0;
+                    simulatedSeconds = 0.0;
+                    executedCycles = 0;
+                    firmwareRunning = true;
+                    paused = false;
+                } else {
+                    firmwareRunning = false;
+                    paused = true;
+                }
+            } else if (actions.restartRequested) {
+                if (loadFirmware(firmwarePath)) {
+                    pendingCycles = 0.0;
+                    simulatedSeconds = 0.0;
+                    executedCycles = 0;
+                    firmwareRunning = true;
+                    paused = false;
+                } else {
+                    firmwareRunning = false;
+                    paused = true;
+                }
+            }
+
+            if (actions.pauseRequested) {
+                paused = true;
+            }
+
+            if (actions.startRequested) {
+                if (runtime && runtimeError.empty()) {
+                    paused = false;
+                    firmwareRunning = true;
+                }
+            }
+
+            editorUI.endFrame();
+
+            glfwSwapBuffers(window.get());
             glfwPollEvents();
         }
 
         std::cout
-            << "Tempo simulado: "
+            << "Ciclos executados: "
+            << executedCycles
+            << "\nTempo simulado: "
             << simulatedSeconds
             << " s\n";
 
