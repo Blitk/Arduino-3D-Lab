@@ -6,6 +6,7 @@
 #include <exception>
 #include <iostream>
 #include <memory>
+#include <stdexcept>
 
 namespace arduino3d {
 namespace {
