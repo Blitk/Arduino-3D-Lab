@@ -194,6 +194,8 @@ Scene::Scene() {
         {0.11F, 0.22F, 0.11F}, {0.72F, 0.73F, 0.70F}
     );
 
+    ledLensIndex_ = objects_.size();
+
     addSphere(
         objects_, {ledBase.x, 0.43F, ledBase.z},
         {0.19F, 0.20F, 0.19F}, {0.92F, 0.045F, 0.055F}
@@ -242,6 +244,16 @@ Scene::Scene() {
 
 const std::vector<RenderObject>& Scene::objects() const noexcept {
     return objects_;
+}
+
+void Scene::setLedOn(bool on) noexcept {
+    if (ledLensIndex_ >= objects_.size()) {
+        return;
+    }
+
+    objects_[ledLensIndex_].color = on
+        ? glm::vec3{1.0F, 0.08F, 0.02F}
+        : glm::vec3{0.24F, 0.04F, 0.04F};
 }
 
 } // namespace arduino3d
