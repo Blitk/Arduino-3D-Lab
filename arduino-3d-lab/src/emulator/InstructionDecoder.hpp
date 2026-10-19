@@ -11,17 +11,29 @@ enum class Opcode {
     MOV,
     ADD,
     SUB,
+    EOR,
     CPI,
     RJMP,
+    JMP,
+    CALL,
+    RET,
     BREQ,
+    BRBC,
     BRNE,
     IN,
-    OUT
+    SBRC,
+    OUT,
+    SBI,
+    CBI,
+    MOVW,
+    CP,
+    CPC,
 };
 
 struct DecodedInstruction {
     Opcode opcode{};
     std::uint16_t word{0};
+    std::uint8_t bit{0};
     std::uint8_t rd{0};
     std::uint8_t rr{0};
     std::uint8_t immediate{0};

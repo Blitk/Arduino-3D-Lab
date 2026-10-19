@@ -46,19 +46,38 @@ void testLdi() {
     assert(cpu.pc == 1);
 }
 
+// void testMov() {
+//     CPUState cpu;
+//     AVR avr(cpu);
+
+//     // LDI R16, 0x2A; MOV R18, R16
+//     loadWords(cpu, {0xE20A, 0x2F20});
+
+//     assert(avr.step().ok());
+//     assert(avr.step().ok());
+
+//     assert(cpu.registers.read(cpu.memory, 18) == 0x2A);
+//     assert(cpu.pc == 2);
+// }
+
+
+
 void testMov() {
     CPUState cpu;
     AVR avr(cpu);
 
     // LDI R16, 0x2A; MOV R18, R16
-    loadWords(cpu, {0xE20A, 0x2D20});
+    loadWords(cpu, {0xE20A, 0x2F20});
 
     assert(avr.step().ok());
-    assert(avr.step().ok());
+    assert(cpu.registers.read(cpu.memory, 16) == 0x2A);
 
+    assert(avr.step().ok());
     assert(cpu.registers.read(cpu.memory, 18) == 0x2A);
     assert(cpu.pc == 2);
 }
+
+
 
 void testAddAndFlags() {
     CPUState cpu;

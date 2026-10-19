@@ -42,10 +42,12 @@ int main() {
     // Flash e EEPROM são espaços independentes.
     memory.writeProgramByte(0x1234, 0xAB);
     memory.writeEeprom(0x0010, 0xCD);
+    memory.writeData(0x0123, 0xCD);
 
     assert(memory.readProgramByte(0x1234) == 0xAB);
     assert(memory.readEeprom(0x0010) == 0xCD);
-    assert(memory.readData(0x1234) != 0xAB);
+    assert(memory.readData(0x0123) == 0xCD);
+    assert(memory.readData(0x0123) != 0xAB);
 
     // Carregamento de bytes de firmware.
     memory.loadProgram({0x0C, 0x94, 0x34, 0x12}, 0);

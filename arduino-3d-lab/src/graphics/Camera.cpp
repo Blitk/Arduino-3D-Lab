@@ -2,7 +2,12 @@
 
 #include <algorithm>
 #include <cmath>
+#include <glad/gl.h>
 
+#ifndef GLFW_INCLUDE_NONE
+#define GLFW_INCLUDE_NONE
+#endif
+#include <GLFW/glfw3.h>
 #include <glm/gtc/matrix_transform.hpp>
 
 namespace arduino3d {

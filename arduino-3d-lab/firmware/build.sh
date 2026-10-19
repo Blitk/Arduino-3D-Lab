@@ -37,7 +37,7 @@ avr-objcopy \
     "${BUILD_DIR}/blink.elf" \
     "${BUILD_DIR}/blink.hex"
 
-avr-size -C --mcu=atmega328p "${BUILD_DIR}/blink.elf"
+avr-size --mcu=atmega328p "$BUILD_DIR/blink.elf"
 
 echo "Firmware compilado:"
 echo "  ELF: ${BUILD_DIR}/blink.elf"

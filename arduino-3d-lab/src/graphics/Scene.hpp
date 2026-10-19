@@ -4,7 +4,12 @@
 #include <cstddef> 
 #include <glm/glm.hpp>
 #include <vector>
+#include <glad/gl.h>
 
+#ifndef GLFW_INCLUDE_NONE
+#define GLFW_INCLUDE_NONE
+#endif
+#include <GLFW/glfw3.h>
 namespace arduino3d {
 
 enum class Geometry {

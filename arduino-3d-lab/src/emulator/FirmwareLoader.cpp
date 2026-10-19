@@ -66,6 +66,11 @@ bool FirmwareLoader::loadIntelHex(
     while (std::getline(file, line)) {
         ++lineNumber;
 
+        // Compatibilidade com arquivos Intel HEX no formato CRLF (Windows).
+        if (!line.empty() && line.back() == '\r') {
+            line.pop_back();
+        }
+
         if (line.empty()) continue;
 
         const auto lineError = [&](const std::string& message) {

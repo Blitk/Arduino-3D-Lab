@@ -1,0 +1,42 @@
+# Dependência JSON
+find_package(nlohmann_json CONFIG REQUIRED)
+
+# Modelo de projeto e serialização
+add_library(arduino3d_project
+    src/project/Project.cpp
+    src/project/Serializer.cpp
+)
+
+target_include_directories(arduino3d_project
+    PUBLIC
+        ${PROJECT_SOURCE_DIR}/src
+)
+
+target_link_libraries(arduino3d_project
+    PUBLIC
+        nlohmann_json::nlohmann_json
+)
+
+# O módulo principal pode utilizar Project e Serializer.
+# Adicione este vínculo depois de declarar arduino3d_core.
+target_link_libraries(arduino3d_core
+    PUBLIC arduino3d_project
+)
+
+# Testes
+include(CTest)
+
+if(BUILD_TESTING)
+    add_executable(test_project_serializer
+        tests/test_project_serializer.cpp
+    )
+
+    target_link_libraries(test_project_serializer
+        PRIVATE arduino3d_project
+    )
+
+    add_test(
+        NAME project_serializer
+        COMMAND test_project_serializer
+    )
+endif()

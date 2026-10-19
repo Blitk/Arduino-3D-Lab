@@ -3,7 +3,12 @@
 
 #include "graphics/Camera.hpp"
 #include "graphics/Scene.hpp"
+#include <glad/gl.h>
 
+#ifndef GLFW_INCLUDE_NONE
+#define GLFW_INCLUDE_NONE
+#endif
+#include <GLFW/glfw3.h>
 #include <cmath>
 #include <fstream>
 #include <stdexcept>
