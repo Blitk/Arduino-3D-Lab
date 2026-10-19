@@ -39,35 +39,16 @@ arduino-3d-lab/
 │   ├── models/
 │   └── shaders/
 ├── firmware/
-│   ├── blink.cpp
 │   └── include/
-│       └── Arduino.h
 ├── src/
 │   ├── main.cpp
 │   ├── app/
-│   │   ├── Application.cpp
-│   │   └── EditorUI.cpp
 │   ├── graphics/
-│   │   ├── Renderer.cpp
-│   │   ├── Camera.cpp
-│   │   └── Scene.cpp
 │   ├── circuit/
-│   │   ├── Circuit.cpp
-│   │   ├── Pin.cpp
-│   │   ├── Wire.cpp
-│   │   └── Led.cpp
 │   ├── emulator/
-│   │   ├── AVR.cpp
-│   │   ├── Memory.cpp
-│   │   ├── InstructionDecoder.cpp
-│   │   └── GPIO.cpp
 │   └── project/
-│       ├── Project.cpp
-│       └── Serializer.cpp
 └── tests/
-    ├── test_memory.cpp
-    ├── test_gpio.cpp
-    └── test_circuit.cpp
+
 ```
 
 ## Arquitetura
