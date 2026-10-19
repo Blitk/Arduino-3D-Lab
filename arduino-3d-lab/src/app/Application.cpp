@@ -16,6 +16,8 @@
 #include <glad/gl.h>
 #include <GLFW/glfw3.h>
 
+#include <algorithm>
+#include <cstdint>
 #include <exception>
 #include <iomanip>
 #include <iostream>
@@ -28,7 +30,10 @@ namespace {
 
 constexpr int WindowWidth = 1280;
 constexpr int WindowHeight = 720;
-constexpr int InstructionsPerFrame = 1000;
+
+constexpr double CpuFrequencyHz = 16'000'000.0;
+constexpr double MaxFrameDelta = 0.05;
+constexpr std::uint64_t MaxCyclesPerFrame = 300'000;
 
 constexpr const char* WindowTitle = "Arduino 3D Lab";
 constexpr const char* FirmwarePath = "build/firmware/blink.hex";
@@ -151,8 +156,6 @@ void configureWindowCallbacks(
     }
 }
 
-// Agrupa os componentes que precisam compartilhar
-// as mesmas instâncias de CPU, circuito e GPIO.
 class EmulatorRuntime {
 public:
     explicit EmulatorRuntime(const std::string& firmwarePath)
@@ -175,7 +178,6 @@ public:
             DigitalState::Low
         );
 
-        // Registra o LED integrado no circuito lógico.
         circuit.addLed(d13, gnd);
 
         std::string error;
@@ -208,8 +210,8 @@ public:
         return avr;
     }
 
-    const Circuit& circuitState() const noexcept {
-        return circuit;
+    bool ledOn() const {
+        return circuit.ledOn(0);
     }
 
 private:
@@ -220,8 +222,6 @@ private:
         return map;
     }
 
-    // A ordem dos membros é importante: as referências
-    // usadas por GPIO e AVR precisam continuar válidas.
     emulator::CPUState cpu;
     Circuit circuit;
 
@@ -235,24 +235,81 @@ private:
 
 void printStartupInformation() {
     std::cout << "Arduino 3D Lab v0.1.0\n";
-    std::cout << "OpenGL: "
-              << glGetString(GL_VERSION)
-              << '\n';
+    std::cout
+        << "OpenGL: "
+        << glGetString(GL_VERSION)
+        << '\n';
     std::cout
         << "Mouse: orbitar e usar a roda para zoom.\n";
     std::cout
         << "WASD: mover | Q/E: vertical | Esc: sair.\n";
+    std::cout
+        << "Espaço: pausar/retomar a simulação.\n";
+}
+
+void processInput(
+    GLFWwindow* window,
+    Camera& camera,
+    float deltaTime
+) {
+    camera.processInput(window, deltaTime);
+
+    if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
+        glfwSetWindowShouldClose(window, GLFW_TRUE);
+    }
+}
+
+void updatePauseState(
+    GLFWwindow* window,
+    bool& paused,
+    int& previousSpaceState
+) {
+    const int spaceState =
+        glfwGetKey(window, GLFW_KEY_SPACE);
+
+    if (
+        spaceState == GLFW_PRESS &&
+        previousSpaceState == GLFW_RELEASE
+    ) {
+        paused = !paused;
+
+        std::cout
+            << (paused
+                ? "Simulação pausada.\n"
+                : "Simulação retomada.\n");
+    }
+
+    previousSpaceState = spaceState;
 }
 
 bool executeFirmwareFrame(
     emulator::AVR& avr,
+    double deltaTime,
+    double& pendingCycles,
+    double& simulatedSeconds,
     bool& firmwareRunning
 ) {
     if (!firmwareRunning) {
         return false;
     }
 
-    for (int i = 0; i < InstructionsPerFrame; ++i) {
+    const double elapsed = std::clamp(
+        deltaTime,
+        0.0,
+        MaxFrameDelta
+    );
+
+    pendingCycles = std::min(
+        pendingCycles + elapsed * CpuFrequencyHz,
+        static_cast<double>(MaxCyclesPerFrame)
+    );
+
+    const auto cycleBudget =
+        static_cast<std::uint64_t>(pendingCycles);
+
+    std::uint64_t consumedCycles = 0;
+
+    while (consumedCycles < cycleBudget) {
         const emulator::StepResult result = avr.step();
 
         if (!result.ok()) {
@@ -270,29 +327,35 @@ bool executeFirmwareFrame(
             firmwareRunning = false;
             return false;
         }
+
+        if (result.cycles == 0) {
+            std::cerr
+                << "Erro: instrução executada sem "
+                   "contabilização de ciclos.\n";
+
+            firmwareRunning = false;
+            return false;
+        }
+
+        consumedCycles += result.cycles;
     }
+
+    pendingCycles -= static_cast<double>(consumedCycles);
+    simulatedSeconds +=
+        static_cast<double>(consumedCycles) / CpuFrequencyHz;
 
     return true;
-}
-
-void processInput(
-    GLFWwindow* window,
-    Camera& camera,
-    float deltaTime
-) {
-    camera.processInput(window, deltaTime);
-
-    if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
-        glfwSetWindowShouldClose(window, GLFW_TRUE);
-    }
 }
 
 void renderFrame(
     GLFWwindow* window,
     Renderer& renderer,
-    const Scene& scene,
-    const Camera& camera
+    Scene& scene,
+    const Camera& camera,
+    bool ledOn
 ) {
+    scene.setLedOn(ledOn);
+
     int width = 0;
     int height = 0;
 
@@ -318,51 +381,65 @@ int Application::run() const {
 
         configureWindowCallbacks(window.get(), camera);
 
-        // A instância permanece viva durante todo o loop.
         EmulatorRuntime runtime(FirmwarePath);
-
-        // Declarado depois da janela para ser destruído antes dela.
         Renderer renderer;
 
         printStartupInformation();
 
-        float previousTime =
-            static_cast<float>(glfwGetTime());
+        double previousTime = glfwGetTime();
+        double pendingCycles = 0.0;
+        double simulatedSeconds = 0.0;
 
+        bool paused = false;
         bool firmwareRunning = true;
+        int previousSpaceState = GLFW_RELEASE;
 
         while (
             glfwWindowShouldClose(window.get())
             == GLFW_FALSE
         ) {
-            const float currentTime =
-                static_cast<float>(glfwGetTime());
-
-            const float deltaTime =
-                currentTime - previousTime;
+            const double currentTime = glfwGetTime();
+            const double deltaTime = currentTime - previousTime;
 
             previousTime = currentTime;
 
             processInput(
                 window.get(),
                 camera,
-                deltaTime
+                static_cast<float>(deltaTime)
             );
 
-            executeFirmwareFrame(
-                runtime.processor(),
-                firmwareRunning
+            updatePauseState(
+                window.get(),
+                paused,
+                previousSpaceState
             );
+
+            if (!paused && firmwareRunning) {
+                executeFirmwareFrame(
+                    runtime.processor(),
+                    deltaTime,
+                    pendingCycles,
+                    simulatedSeconds,
+                    firmwareRunning
+                );
+            }
 
             renderFrame(
                 window.get(),
                 renderer,
                 scene,
-                camera
+                camera,
+                runtime.ledOn()
             );
 
             glfwPollEvents();
         }
+
+        std::cout
+            << "Tempo simulado: "
+            << simulatedSeconds
+            << " s\n";
 
         return 0;
     } catch (const std::exception& exception) {
