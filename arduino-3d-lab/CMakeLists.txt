@@ -67,6 +67,42 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     )
 endif()
 
+
+# Núcleo lógico: sem dependências gráficas.
+add_library(arduino3d_circuit
+    src/circuit/Circuit.cpp
+    src/circuit/Pin.cpp
+    src/circuit/Wire.cpp
+    src/circuit/Led.cpp
+)
+
+target_include_directories(arduino3d_circuit
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_compile_features(arduino3d_circuit PUBLIC cxx_std_20)
+
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(arduino3d_circuit PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+    )
+endif()
+
+# A aplicação gráfica pode consumir a biblioteca lógica.
+target_link_libraries(arduino3d_core PUBLIC arduino3d_circuit)
+
+# Teste independente do OpenGL.
+if(BUILD_TESTING)
+    add_executable(test_circuit tests/test_circuit.cpp)
+    target_link_libraries(test_circuit PRIVATE arduino3d_circuit)
+
+    add_test(NAME circuit COMMAND test_circuit)
+endif()
+
+
 add_executable(arduino-3d-lab src/main.cpp)
 target_link_libraries(arduino-3d-lab PRIVATE arduino3d_core)
 
