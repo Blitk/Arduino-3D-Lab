@@ -17,6 +17,7 @@
 #include <GLFW/glfw3.h>
 
 #include <exception>
+#include <iomanip>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
@@ -25,6 +26,13 @@
 namespace arduino3d {
 namespace {
 
+constexpr int WindowWidth = 1280;
+constexpr int WindowHeight = 720;
+constexpr int InstructionsPerFrame = 1000;
+
+constexpr const char* WindowTitle = "Arduino 3D Lab";
+constexpr const char* FirmwarePath = "build/firmware/blink.hex";
+
 struct WindowDeleter {
     void operator()(GLFWwindow* window) const noexcept {
         if (window != nullptr) {
@@ -32,6 +40,8 @@ struct WindowDeleter {
         }
     }
 };
+
+using WindowHandle = std::unique_ptr<GLFWwindow, WindowDeleter>;
 
 class GlfwRuntime {
 public:
@@ -75,169 +85,251 @@ void scrollCallback(
     }
 }
 
+WindowHandle createWindow() {
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+    glfwWindowHint(
+        GLFW_OPENGL_PROFILE,
+        GLFW_OPENGL_CORE_PROFILE
+    );
+
+    WindowHandle window(
+        glfwCreateWindow(
+            WindowWidth,
+            WindowHeight,
+            WindowTitle,
+            nullptr,
+            nullptr
+        )
+    );
+
+    if (!window) {
+        throw std::runtime_error(
+            "Falha ao criar a janela GLFW."
+        );
+    }
+
+    glfwMakeContextCurrent(window.get());
+    glfwSwapInterval(1);
+
+    if (gladLoadGL(
+            reinterpret_cast<GLADloadfunc>(
+                glfwGetProcAddress
+            )
+        ) == 0) {
+        throw std::runtime_error(
+            "Falha ao inicializar GLAD."
+        );
+    }
+
+    return window;
+}
+
+void configureWindowCallbacks(
+    GLFWwindow* window,
+    Camera& camera
+) {
+    glfwSetWindowUserPointer(window, &camera);
+
+    glfwSetFramebufferSizeCallback(
+        window,
+        framebufferSizeCallback
+    );
+
+    glfwSetScrollCallback(
+        window,
+        scrollCallback
+    );
+
+    int width = 0;
+    int height = 0;
+
+    glfwGetFramebufferSize(window, &width, &height);
+
+    if (width > 0 && height > 0) {
+        glViewport(0, 0, width, height);
+    }
+}
+
+// Agrupa os componentes que precisam compartilhar
+// as mesmas instâncias de CPU, circuito e GPIO.
+class EmulatorRuntime {
+public:
+    explicit EmulatorRuntime(const std::string& firmwarePath)
+        : cpu{},
+          circuit{},
+          d13(circuit.addPin(
+              "D13",
+              PinDirection::Input
+          )),
+          gnd(circuit.addPin(
+              "GND",
+              PinDirection::Output
+          )),
+          pinMap(makePinMap(d13)),
+          gpio(cpu, circuit, pinMap),
+          avr(cpu, &gpio) {
+
+        circuit.setOutput(
+            gnd,
+            DigitalState::Low
+        );
+
+        // Registra o LED integrado no circuito lógico.
+        circuit.addLed(d13, gnd);
+
+        std::string error;
+
+        if (!emulator::FirmwareLoader::loadIntelHex(
+                firmwarePath,
+                cpu.memory,
+                &error
+            )) {
+            throw std::runtime_error(
+                "Falha ao carregar firmware '" +
+                firmwarePath + "': " + error
+            );
+        }
+
+        cpu.pc = 0;
+
+        if (!gpio.synchronize(&error)) {
+            throw std::runtime_error(
+                "Falha ao inicializar GPIO: " + error
+            );
+        }
+
+        std::cout
+            << "Firmware carregado: "
+            << firmwarePath << '\n';
+    }
+
+    emulator::AVR& processor() noexcept {
+        return avr;
+    }
+
+    const Circuit& circuitState() const noexcept {
+        return circuit;
+    }
+
+private:
+    static emulator::GPIO::PinMap makePinMap(PinId ledPin) {
+        emulator::GPIO::PinMap map{};
+        map.fill(0);
+        map[13] = ledPin;
+        return map;
+    }
+
+    // A ordem dos membros é importante: as referências
+    // usadas por GPIO e AVR precisam continuar válidas.
+    emulator::CPUState cpu;
+    Circuit circuit;
+
+    PinId d13;
+    PinId gnd;
+
+    emulator::GPIO::PinMap pinMap;
+    emulator::GPIO gpio;
+    emulator::AVR avr;
+};
+
+void printStartupInformation() {
+    std::cout << "Arduino 3D Lab v0.1.0\n";
+    std::cout << "OpenGL: "
+              << glGetString(GL_VERSION)
+              << '\n';
+    std::cout
+        << "Mouse: orbitar e usar a roda para zoom.\n";
+    std::cout
+        << "WASD: mover | Q/E: vertical | Esc: sair.\n";
+}
+
+bool executeFirmwareFrame(
+    emulator::AVR& avr,
+    bool& firmwareRunning
+) {
+    if (!firmwareRunning) {
+        return false;
+    }
+
+    for (int i = 0; i < InstructionsPerFrame; ++i) {
+        const emulator::StepResult result = avr.step();
+
+        if (!result.ok()) {
+            std::cerr
+                << "Erro durante a execução do firmware.\n"
+                << "PC: 0x"
+                << std::hex << result.pcBefore
+                << "\nInstrução: 0x"
+                << result.word
+                << std::dec
+                << "\nDetalhes: "
+                << result.message
+                << '\n';
+
+            firmwareRunning = false;
+            return false;
+        }
+    }
+
+    return true;
+}
+
+void processInput(
+    GLFWwindow* window,
+    Camera& camera,
+    float deltaTime
+) {
+    camera.processInput(window, deltaTime);
+
+    if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
+        glfwSetWindowShouldClose(window, GLFW_TRUE);
+    }
+}
+
+void renderFrame(
+    GLFWwindow* window,
+    Renderer& renderer,
+    const Scene& scene,
+    const Camera& camera
+) {
+    int width = 0;
+    int height = 0;
+
+    glfwGetFramebufferSize(window, &width, &height);
+
+    if (width <= 0 || height <= 0) {
+        return;
+    }
+
+    renderer.render(scene, camera, width, height);
+    glfwSwapBuffers(window);
+}
+
 } // namespace
 
 int Application::run() const {
     try {
         GlfwRuntime glfwRuntime;
-
-        glfwWindowHint(
-            GLFW_CONTEXT_VERSION_MAJOR, 3
-        );
-        glfwWindowHint(
-            GLFW_CONTEXT_VERSION_MINOR, 3
-        );
-        glfwWindowHint(
-            GLFW_OPENGL_PROFILE,
-            GLFW_OPENGL_CORE_PROFILE
-        );
-
-        std::unique_ptr<GLFWwindow, WindowDeleter> window(
-            glfwCreateWindow(
-                1280,
-                720,
-                "Arduino 3D Lab",
-                nullptr,
-                nullptr
-            )
-        );
-
-        if (!window) {
-            std::cerr
-                << "Falha ao criar a janela GLFW.\n";
-            return 1;
-        }
-
-        glfwMakeContextCurrent(window.get());
-        glfwSwapInterval(1);
-
-        if (gladLoadGL(
-                reinterpret_cast<GLADloadfunc>(
-                    glfwGetProcAddress
-                )
-            ) == 0) {
-            std::cerr
-                << "Falha ao inicializar GLAD.\n";
-            return 1;
-        }
+        WindowHandle window = createWindow();
 
         Camera camera;
         Scene scene;
 
-        glfwSetWindowUserPointer(
-            window.get(), &camera
-        );
+        configureWindowCallbacks(window.get(), camera);
 
-        glfwSetFramebufferSizeCallback(
-            window.get(), framebufferSizeCallback
-        );
+        // A instância permanece viva durante todo o loop.
+        EmulatorRuntime runtime(FirmwarePath);
 
-        glfwSetScrollCallback(
-            window.get(), scrollCallback
-        );
-
-        int width = 0;
-        int height = 0;
-
-        glfwGetFramebufferSize(
-            window.get(), &width, &height
-        );
-
-        if (width > 0 && height > 0) {
-            glViewport(0, 0, width, height);
-        }
-
-        // --------------------------------------------------
-        // Inicialização do emulador ATmega328P
-        // --------------------------------------------------
-
-        arduino3d::emulator::CPUState cpu;
-        arduino3d::Circuit circuit;
-
-        // LED integrado do Arduino Uno: pino digital D13.
-        const auto d13 = circuit.addPin(
-            "D13",
-            arduino3d::PinDirection::Input
-        );
-
-        // Referência lógica de GND para o LED.
-        const auto gnd = circuit.addPin(
-            "GND",
-            arduino3d::PinDirection::Output
-        );
-
-        circuit.setOutput(
-            gnd,
-            arduino3d::DigitalState::Low
-        );
-
-        arduino3d::emulator::GPIO::PinMap pinMap{};
-        pinMap.fill(0);
-        pinMap[13] = d13;
-
-        arduino3d::emulator::GPIO gpio(
-            cpu,
-            circuit,
-            pinMap
-        );
-
-        // Carrega o firmware gerado por firmware/build.sh.
-        const std::string firmwarePath =
-            "build/firmware/blink.hex";
-
-        std::string firmwareError;
-
-        if (!arduino3d::emulator::FirmwareLoader::loadIntelHex(
-                firmwarePath,
-                cpu.memory,
-                &firmwareError
-            )) {
-            std::cerr
-                << "Erro ao carregar firmware '"
-                << firmwarePath << "': "
-                << firmwareError << '\n';
-
-            return 1;
-        }
-
-        cpu.pc = 0;
-
-        arduino3d::emulator::AVR avr(
-            cpu,
-            &gpio
-        );
-
-        std::cout
-            << "Firmware carregado: "
-            << firmwarePath << '\n';
-
-        // --------------------------------------------------
-        // Inicialização da renderização
-        // --------------------------------------------------
-
-        // Destruído antes da janela OpenGL.
+        // Declarado depois da janela para ser destruído antes dela.
         Renderer renderer;
 
-        std::cout
-            << "Arduino 3D Lab v0.1.0\n";
-
-        std::cout
-            << "OpenGL: "
-            << glGetString(GL_VERSION)
-            << '\n';
-
-        std::cout
-            << "Mouse: orbitar e usar a roda para zoom.\n";
-
-        std::cout
-            << "WASD: mover | Q/E: vertical | Esc: sair.\n";
+        printStartupInformation();
 
         float previousTime =
             static_cast<float>(glfwGetTime());
 
-        // --------------------------------------------------
-        // Loop principal
-        // --------------------------------------------------
+        bool firmwareRunning = true;
 
         while (
             glfwWindowShouldClose(window.get())
@@ -251,67 +343,23 @@ int Application::run() const {
 
             previousTime = currentTime;
 
-            camera.processInput(
+            processInput(
                 window.get(),
+                camera,
                 deltaTime
             );
 
-            // Limita o trabalho de emulação por frame para
-            // evitar bloquear indefinidamente a interface.
-            constexpr int InstructionsPerFrame = 1000;
-
-            for (
-                int i = 0;
-                i < InstructionsPerFrame;
-                ++i
-            ) {
-                const auto result = avr.step();
-
-                if (
-                    result !=
-                    arduino3d::emulator::StepStatus::Executed
-                ) {
-                    std::cerr
-                        << "Erro durante a execução do firmware. "
-                        << "O emulador interrompeu o programa.\n";
-
-                    glfwSetWindowShouldClose(
-                        window.get(),
-                        GLFW_TRUE
-                    );
-
-                    break;
-                }
-            }
-
-            glfwGetFramebufferSize(
-                window.get(),
-                &width,
-                &height
+            executeFirmwareFrame(
+                runtime.processor(),
+                firmwareRunning
             );
 
-            if (width > 0 && height > 0) {
-                renderer.render(
-                    scene,
-                    camera,
-                    width,
-                    height
-                );
-
-                glfwSwapBuffers(window.get());
-            }
-
-            if (
-                glfwGetKey(
-                    window.get(),
-                    GLFW_KEY_ESCAPE
-                ) == GLFW_PRESS
-            ) {
-                glfwSetWindowShouldClose(
-                    window.get(),
-                    GLFW_TRUE
-                );
-            }
+            renderFrame(
+                window.get(),
+                renderer,
+                scene,
+                camera
+            );
 
             glfwPollEvents();
         }
