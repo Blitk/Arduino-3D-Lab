@@ -72,6 +72,16 @@ WireId Circuit::connect(PinId first, PinId second) {
     return id;
 }
 
+void Circuit::setPinDirection(PinId id, PinDirection direction) {
+    Pin& pin = requirePin(id);
+    pin.direction_ = direction;
+
+    // Um pino configurado como entrada deixa de dirigir a rede.
+    if (direction == PinDirection::Input) {
+        pin.drivenState_ = DigitalState::Floating;
+    }
+}
+
 void Circuit::addLed(PinId anode, PinId cathode) {
     requirePin(anode);
     requirePin(cathode);
