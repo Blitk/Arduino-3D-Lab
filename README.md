@@ -17,6 +17,7 @@ Status: projeto experimental em desenvolvimento. Os recursos serão implementado
 Tecnologias
 
 Tecnologia	Finalidade
+IA  Geração e implementação 
 C++20	Linguagem principal
 OpenGL, GLFW e GLAD	Renderização 3D
 GLM	Matemática gráfica
