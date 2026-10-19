@@ -128,6 +128,7 @@ StepResult AVR::step() {
     }
 
     try {
+        const bool zeroBefore = cpu_.sreg.flag(StatusRegister::Zero);
         execute(instruction);
     } catch (const std::exception& exception) {
         result.status = StepStatus::InvalidCpuState;
@@ -144,7 +145,23 @@ StepResult AVR::step() {
             return result;
         }
     }
+    switch (instruction.opcode) {
+    case Opcode::RJMP:
+            result.cycles = 2;
+            break;
 
+    case Opcode::BREQ:
+            result.cycles = zeroBefore ? 2 : 1;
+            break;
+
+    case Opcode::BRNE:
+            result.cycles = zeroBefore ? 1 : 2;
+            break;
+
+    default:
+            result.cycles = 1;
+            break;
+    }
     result.status = StepStatus::Executed;
     return result;
 }
