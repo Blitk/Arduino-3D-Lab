@@ -23,6 +23,7 @@ struct StepResult {
     std::uint16_t pcBefore{0};
     std::uint16_t word{0};
     std::string message;
+    std::uint8_t cycles{0};
 
     bool ok() const noexcept {
         return status == StepStatus::Executed;
