@@ -1,6 +1,6 @@
 #include "app/Application.hpp"
 #include "app/EditorUI.hpp"
-
+#include <cstdio>
 #include "graphics/Camera.hpp"
 #include "graphics/Renderer.hpp"
 #include "graphics/Scene.hpp"
