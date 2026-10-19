@@ -1,5 +1,9 @@
 #include "app/Application.hpp"
 
+#include "graphics/Camera.hpp"
+#include "graphics/Renderer.hpp"
+#include "graphics/Scene.hpp"
+
 #include <glad/gl.h>
 #include <GLFW/glfw3.h>
 
@@ -11,7 +15,7 @@
 namespace arduino3d {
 namespace {
 
-struct GlfwDeleter {
+struct WindowDeleter {
     void operator()(GLFWwindow* window) const noexcept {
         if (window != nullptr) {
             glfwDestroyWindow(window);
@@ -23,7 +27,7 @@ class GlfwRuntime {
 public:
     GlfwRuntime() {
         if (glfwInit() != GLFW_TRUE) {
-            throw std::runtime_error("Falha ao inicializar o GLFW.");
+            throw std::runtime_error("Falha ao inicializar GLFW.");
         }
     }
 
@@ -35,15 +39,23 @@ public:
     GlfwRuntime& operator=(const GlfwRuntime&) = delete;
 };
 
-void framebufferSizeCallback(
-    GLFWwindow* window,
-    int width,
-    int height
-) {
-    (void)window;
-
+void framebufferSizeCallback(GLFWwindow*, int width, int height) {
     if (width > 0 && height > 0) {
         glViewport(0, 0, width, height);
+    }
+}
+
+void scrollCallback(
+    GLFWwindow* window,
+    double,
+    double yOffset
+) {
+    auto* camera = static_cast<Camera*>(
+        glfwGetWindowUserPointer(window)
+    );
+
+    if (camera != nullptr) {
+        camera->zoom(static_cast<float>(yOffset));
     }
 }
 
@@ -57,20 +69,20 @@ int Application::run() const {
         glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
         glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-        GLFWwindow* rawWindow = glfwCreateWindow(
-            1280,
-            720,
-            "Arduino 3D Lab",
-            nullptr,
-            nullptr
+        std::unique_ptr<GLFWwindow, WindowDeleter> window(
+            glfwCreateWindow(
+                1280,
+                720,
+                "Arduino 3D Lab",
+                nullptr,
+                nullptr
+            )
         );
 
-        if (rawWindow == nullptr) {
-            std::cerr << "Falha ao criar a janela OpenGL.\n";
+        if (!window) {
+            std::cerr << "Falha ao criar a janela GLFW.\n";
             return 1;
         }
-
-        std::unique_ptr<GLFWwindow, GlfwDeleter> window(rawWindow);
 
         glfwMakeContextCurrent(window.get());
         glfwSwapInterval(1);
@@ -78,41 +90,59 @@ int Application::run() const {
         if (gladLoadGL(
                 reinterpret_cast<GLADloadfunc>(glfwGetProcAddress)
             ) == 0) {
-            std::cerr << "Falha ao carregar as funcoes OpenGL pelo GLAD.\n";
+            std::cerr << "Falha ao inicializar GLAD.\n";
             return 1;
         }
 
+        Camera camera;
+        Scene scene;
+
+        glfwSetWindowUserPointer(window.get(), &camera);
         glfwSetFramebufferSizeCallback(
-            window.get(),
-            framebufferSizeCallback
+            window.get(), framebufferSizeCallback
         );
+        glfwSetScrollCallback(window.get(), scrollCallback);
 
-        int framebufferWidth = 0;
-        int framebufferHeight = 0;
+        int width = 0;
+        int height = 0;
+        glfwGetFramebufferSize(window.get(), &width, &height);
 
-        glfwGetFramebufferSize(
-            window.get(),
-            &framebufferWidth,
-            &framebufferHeight
-        );
-
-        if (framebufferWidth > 0 && framebufferHeight > 0) {
-            glViewport(0, 0, framebufferWidth, framebufferHeight);
+        if (width > 0 && height > 0) {
+            glViewport(0, 0, width, height);
         }
+
+        // Declarado depois da janela para ser destruído antes dela.
+        Renderer renderer;
 
         std::cout << "Arduino 3D Lab v0.1.0\n";
         std::cout << "OpenGL: " << glGetString(GL_VERSION) << '\n';
-        std::cout << "Pressione Esc para sair.\n";
+        std::cout << "Mouse: orbitar e usar a roda para zoom.\n";
+        std::cout << "WASD: mover | Q/E: vertical | Esc: sair.\n";
+
+        float previousTime = static_cast<float>(glfwGetTime());
 
         while (glfwWindowShouldClose(window.get()) == GLFW_FALSE) {
+            const float currentTime =
+                static_cast<float>(glfwGetTime());
+
+            const float deltaTime = currentTime - previousTime;
+            previousTime = currentTime;
+
+            camera.processInput(window.get(), deltaTime);
+
+            glfwGetFramebufferSize(
+                window.get(), &width, &height
+            );
+
+            if (width > 0 && height > 0) {
+                renderer.render(scene, camera, width, height);
+                glfwSwapBuffers(window.get());
+            }
+
             if (glfwGetKey(window.get(), GLFW_KEY_ESCAPE) == GLFW_PRESS) {
                 glfwSetWindowShouldClose(window.get(), GLFW_TRUE);
             }
 
-            glClearColor(0.08F, 0.10F, 0.14F, 1.0F);
-            glClear(GL_COLOR_BUFFER_BIT);
-
-            glfwSwapBuffers(window.get());
             glfwPollEvents();
         }
 
