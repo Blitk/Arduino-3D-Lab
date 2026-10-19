@@ -1,6 +1,6 @@
 
 #include "emulator/CPU.hpp"
-
+#include <stdexcept>
 #include <string>
 
 namespace arduino3d::emulator {
