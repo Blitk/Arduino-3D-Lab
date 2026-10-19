@@ -21,11 +21,12 @@ struct RenderObject {
 class Scene {
 public:
     Scene();
-
+    void setLedOn(bool on) noexcept;
     const std::vector<RenderObject>& objects() const noexcept;
 
 private:
     std::vector<RenderObject> objects_;
+    std::size_t ledLensIndex_{0};
 };
 
 } // namespace arduino3d
