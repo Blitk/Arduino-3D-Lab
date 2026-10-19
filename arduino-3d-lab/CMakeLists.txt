@@ -65,7 +65,7 @@ add_library(arduino3d_emulator
     src/emulator/InstructionDecoder.cpp
     src/emulator/AVR.cpp
     src/emulator/GPIO.cpp
-    src/emulator/FirmwareLoader.cp
+    src/emulator/FirmwareLoader.cpp
 )
 target_include_directories(arduino3d_emulator
     PUBLIC
