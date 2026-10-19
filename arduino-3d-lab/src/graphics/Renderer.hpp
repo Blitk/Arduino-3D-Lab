@@ -1,9 +1,11 @@
+
 #pragma once
 
 #include <glad/gl.h>
 #include <glm/glm.hpp>
 
 #include <string>
+#include <vector>
 
 namespace arduino3d {
 
@@ -18,27 +20,40 @@ public:
     Renderer(const Renderer&) = delete;
     Renderer& operator=(const Renderer&) = delete;
 
-    void render(const Scene& scene, const Camera& camera,
-                int width, int height);
+    void render(
+        const Scene& scene,
+        const Camera& camera,
+        int width,
+        int height
+    );
 
 private:
+    struct Mesh {
+        GLuint vao{0};
+        GLuint vbo{0};
+        GLsizei vertexCount{0};
+    };
+
     GLuint createShaderProgram(
         const std::string& vertexPath,
         const std::string& fragmentPath
     );
 
+    Mesh createMesh(const std::vector<float>& vertices);
     void createCube();
+    void createCylinder();
+    void createSphere();
     void createGrid();
     void destroy() noexcept;
 
     GLuint shaderProgram_{0};
 
-    GLuint cubeVAO_{0};
-    GLuint cubeVBO_{0};
+    Mesh cube_;
+    Mesh cylinder_;
+    Mesh sphere_;
 
     GLuint gridVAO_{0};
     GLuint gridVBO_{0};
-
     GLsizei gridVertexCount_{0};
 
     GLint modelLocation_{-1};
