@@ -8,13 +8,16 @@ uniform vec3 uColor;
 out vec4 FragColor;
 
 void main() {
-    vec3 normal = normalize(vNormal);
-    vec3 lightDirection = normalize(vec3(-0.4, 1.0, 0.3));
+    float normalLength = length(vNormal);
+    float lighting = 0.65;
 
-    float diffuse = max(dot(normal, lightDirection), 0.0);
-    float lighting = 0.25 + 0.75 * diffuse;
+    if (normalLength > 0.001) {
+        vec3 normal = vNormal / normalLength;
+        vec3 lightDirection = normalize(vec3(-0.4, 1.0, 0.3));
 
-    vec3 color = uColor * lighting;
+        float diffuse = max(dot(normal, lightDirection), 0.0);
+        lighting = 0.25 + 0.75 * diffuse;
+    }
 
-    FragColor = vec4(color, 1.0);
+    FragColor = vec4(uColor * lighting, 1.0);
 }
