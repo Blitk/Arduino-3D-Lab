@@ -14,7 +14,9 @@ enum class Opcode {
     CPI,
     RJMP,
     BREQ,
-    BRNE
+    BRNE,
+    IN,
+    OUT
 };
 
 struct DecodedInstruction {
@@ -23,7 +25,8 @@ struct DecodedInstruction {
     std::uint8_t rd{0};
     std::uint8_t rr{0};
     std::uint8_t immediate{0};
-    std::int8_t relative{0};
+    std::int16_t relative{0};
+    std::uint8_t ioAddress{0};
 };
 
 class InvalidInstruction final : public std::runtime_error {
