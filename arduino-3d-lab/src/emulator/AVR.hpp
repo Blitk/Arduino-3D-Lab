@@ -1,6 +1,7 @@
 #pragma once
 
 #include "emulator/CPU.hpp"
+#include "emulator/GPIO.hpp"
 #include "emulator/InstructionDecoder.hpp"
 
 #include <cstddef>
@@ -13,7 +14,8 @@ enum class StepStatus {
     Executed,
     InvalidInstruction,
     ProgramCounterOutOfRange,
-    InvalidCpuState
+    InvalidCpuState,
+    PeripheralError
 };
 
 struct StepResult {
@@ -31,7 +33,8 @@ enum class RunStatus {
     LimitReached,
     InvalidInstruction,
     ProgramCounterOutOfRange,
-    InvalidCpuState
+    InvalidCpuState,
+    PeripheralError
 };
 
 struct RunResult {
@@ -46,7 +49,7 @@ struct RunResult {
 
 class AVR {
 public:
-    explicit AVR(CPUState& cpu) noexcept;
+    explicit AVR(CPUState& cpu, GPIO* gpio = nullptr) noexcept;
 
     StepResult step();
     RunResult run(std::size_t instructionLimit);
@@ -58,6 +61,7 @@ private:
     void execute(const DecodedInstruction& instruction);
 
     CPUState& cpu_;
+    GPIO* gpio_;
 };
 
 } // namespace arduino3d::emulator
