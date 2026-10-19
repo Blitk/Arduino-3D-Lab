@@ -1,23 +1,39 @@
 #include "emulator/InstructionDecoder.hpp"
+
 #include <cstddef>
 #include <string>
 
 namespace arduino3d::emulator {
+namespace {
+
+std::string formatWord(std::uint16_t word) {
+    constexpr char hex[] = "0123456789ABCDEF";
+    std::string result(4, '0');
+
+    for (int i = 3; i >= 0; --i) {
+        result[static_cast<std::size_t>(i)] = hex[word & 0x0F];
+        word = static_cast<std::uint16_t>(word >> 4);
+    }
+
+    return result;
+}
+
+std::int16_t signExtend(std::uint16_t value, unsigned bits) {
+    const auto signBit = static_cast<std::uint16_t>(1U << (bits - 1U));
+
+    if ((value & signBit) != 0) {
+        return static_cast<std::int16_t>(
+            static_cast<int>(value) - static_cast<int>(1U << bits)
+        );
+    }
+
+    return static_cast<std::int16_t>(value);
+}
+
+} // namespace
 
 InvalidInstruction::InvalidInstruction(std::uint16_t word)
-    : std::runtime_error(
-          "Opcode AVR invalido: 0x" + [] (std::uint16_t value) {
-              constexpr char hex[] = "0123456789ABCDEF";
-              std::string result(4, '0');
-
-              for (int i = 3; i >= 0; --i) {
-                  result[static_cast<std::size_t>(i)] =
-                      hex[value & 0x0F];
-                  value = static_cast<std::uint16_t>(value >> 4);
-              }
-
-              return result;
-          }(word)) {
+    : std::runtime_error("Opcode AVR invalido: 0x" + formatWord(word)) {
 }
 
 DecodedInstruction InstructionDecoder::decode(std::uint16_t word) {
@@ -33,9 +49,11 @@ DecodedInstruction InstructionDecoder::decode(std::uint16_t word) {
     if ((word & 0xF000) == 0xE000) {
         instruction.opcode = Opcode::LDI;
         instruction.rd = static_cast<std::uint8_t>(
-            16 + ((word >> 4) & 0x0F));
+            16U + ((word >> 4U) & 0x0FU)
+        );
         instruction.immediate = static_cast<std::uint8_t>(
-            (word & 0x000F) | ((word >> 4) & 0x00F0));
+            (word & 0x000FU) | ((word >> 4U) & 0x00F0U)
+        );
         return instruction;
     }
 
@@ -43,64 +61,89 @@ DecodedInstruction InstructionDecoder::decode(std::uint16_t word) {
     if ((word & 0xF000) == 0x3000) {
         instruction.opcode = Opcode::CPI;
         instruction.rd = static_cast<std::uint8_t>(
-            16 + ((word >> 4) & 0x0F));
+            16U + ((word >> 4U) & 0x0FU)
+        );
         instruction.immediate = static_cast<std::uint8_t>(
-            (word & 0x000F) | ((word >> 4) & 0x00F0));
+            (word & 0x000FU) | ((word >> 4U) & 0x00F0U)
+        );
         return instruction;
     }
 
-    // MOV: 0010 11rd dddd rrrr
-    // ADD: 0000 11rd dddd rrrr
-    // SUB: 0001 10rd dddd rrrr
-    const auto destination = static_cast<std::uint8_t>(
-        (word >> 4) & 0x1F);
-
-    const auto source = static_cast<std::uint8_t>(
-        (word & 0x0F) | ((word >> 5) & 0x10));
-
-    if ((word & 0xFC00) == 0x2C00) {
-        instruction.opcode = Opcode::MOV;
-    } else if ((word & 0xFC00) == 0x0C00) {
-        instruction.opcode = Opcode::ADD;
-    } else if ((word & 0xFC00) == 0x1800) {
-        instruction.opcode = Opcode::SUB;
-    } else {
-        // RJMP: 1100 kkkk kkkk kkkk
-        if ((word & 0xF000) == 0xC000) {
-            instruction.opcode = Opcode::RJMP;
-
-            int offset = word & 0x0FFF;
-            if ((offset & 0x0800) != 0) {
-                offset -= 0x1000;
-            }
-
-            instruction.relative = static_cast<std::int8_t>(offset);
-            return instruction;
-        }
-
-        // BREQ: 1111 00kk kkkk 0000
-        // BRNE: 1111 00kk kkkk 0001
-        const auto branch = static_cast<std::uint16_t>(word & 0xFC07);
-
-        if (branch == 0xF000 || branch == 0xF001) {
-            instruction.opcode =
-                branch == 0xF000 ? Opcode::BREQ : Opcode::BRNE;
-
-            int offset = (word >> 3) & 0x7F;
-            if ((offset & 0x40) != 0) {
-                offset -= 0x80;
-            }
-
-            instruction.relative = static_cast<std::int8_t>(offset);
-            return instruction;
-        }
-
-        throw InvalidInstruction(word);
+    // IN: 1011 0AAd dddd AAAA
+    if ((word & 0xF800) == 0xB000) {
+        instruction.opcode = Opcode::IN;
+        instruction.rd = static_cast<std::uint8_t>(
+            (word >> 4U) & 0x1FU
+        );
+        instruction.ioAddress = static_cast<std::uint8_t>(
+            ((word >> 5U) & 0x30U) | (word & 0x0FU)
+        );
+        return instruction;
     }
 
-    instruction.rd = destination;
-    instruction.rr = source;
-    return instruction;
+    // OUT: 1011 1AAr rrrr AAAA
+    if ((word & 0xF800) == 0xB800) {
+        instruction.opcode = Opcode::OUT;
+        instruction.rr = static_cast<std::uint8_t>(
+            (word >> 4U) & 0x1FU
+        );
+        instruction.ioAddress = static_cast<std::uint8_t>(
+            ((word >> 5U) & 0x30U) | (word & 0x0FU)
+        );
+        return instruction;
+    }
+
+    const auto destination = static_cast<std::uint8_t>(
+        (word >> 4U) & 0x1FU
+    );
+
+    const auto source = static_cast<std::uint8_t>(
+        (word & 0x0FU) | ((word >> 5U) & 0x10U)
+    );
+
+    // MOV: 0010 11rd dddd rrrr
+    if ((word & 0xFC00) == 0x2C00) {
+        instruction.opcode = Opcode::MOV;
+        instruction.rd = destination;
+        instruction.rr = source;
+        return instruction;
+    }
+
+    // ADD: 0000 11rd dddd rrrr
+    if ((word & 0xFC00) == 0x0C00) {
+        instruction.opcode = Opcode::ADD;
+        instruction.rd = destination;
+        instruction.rr = source;
+        return instruction;
+    }
+
+    // SUB: 0001 10rd dddd rrrr
+    if ((word & 0xFC00) == 0x1800) {
+        instruction.opcode = Opcode::SUB;
+        instruction.rd = destination;
+        instruction.rr = source;
+        return instruction;
+    }
+
+    // RJMP: 1100 kkkk kkkk kkkk
+    if ((word & 0xF000) == 0xC000) {
+        instruction.opcode = Opcode::RJMP;
+        instruction.relative = signExtend(word & 0x0FFFU, 12);
+        return instruction;
+    }
+
+    // BREQ: 1111 00kk kkkk 0000
+    // BRNE: 1111 00kk kkkk 0001
+    const auto branch = static_cast<std::uint16_t>(word & 0xFC07U);
+
+    if (branch == 0xF000 || branch == 0xF001) {
+        instruction.opcode =
+            branch == 0xF000 ? Opcode::BREQ : Opcode::BRNE;
+        instruction.relative = signExtend((word >> 3U) & 0x7FU, 7);
+        return instruction;
+    }
+
+    throw InvalidInstruction(word);
 }
 
 } // namespace arduino3d::emulator
