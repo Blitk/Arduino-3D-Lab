@@ -135,4 +135,4 @@ ctest --test-dir build --output-on-failure
 
 ## Licença
 
-Ainda a definir.
+MIT
